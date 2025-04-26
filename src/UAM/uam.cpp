@@ -4,10 +4,160 @@
 #include <map>
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 
-#include "model.hpp"
-#include "pskreader.hpp"
+#include <vector>
+#include <stdint.h>
 
+#include <GL/glew.h>
+
+#include "../Common/util.hpp"
+
+#include "uam.hpp"
+#include "textures.hpp"
+
+struct PSK_ChunkHeader
+{
+    std::string chunkId;
+    int32_t typeFlag;
+    int32_t dataSize;
+    int32_t dataCount;
+};
+
+struct PSK_Point
+{
+    float x;
+    float y;
+    float z;
+};
+
+struct PSK_Wedge
+{
+    uint32_t pointIndex;
+    float u;
+    float v;
+    int32_t materialIndex;
+};
+
+struct PSK_Face
+{
+    int32_t wedge0;
+    int32_t wedge1;
+    int32_t wedge2;
+    
+    int8_t materialIndex;
+    int8_t auxMaterialIndex;
+    int32_t smoothingGroups;
+};
+
+struct PSK_Material
+{
+    std::string name;
+
+    int32_t textureIndex;
+    int32_t polyFlags;
+    int32_t auxMaterial;
+    int32_t auxFlags;
+    int32_t lodBias;
+    int32_t lodStyle;
+};
+
+struct PSK_MeshData
+{
+    std::vector<PSK_Point> points;
+    std::vector<PSK_Wedge> wedges;
+    std::vector<PSK_Face> faces;
+    std::vector<PSK_Material> materials;
+};
+
+struct CompleteVertex
+{
+    float x;
+    float y;
+    float z;
+
+    float u;
+    float v;
+    int32_t materialIndex;
+};
+
+CompleteVertex *getVertexArray(std::vector<PSK_Point> &points, std::vector<PSK_Wedge> &wedges)
+{
+    CompleteVertex *array = new CompleteVertex[wedges.size()];
+    for (size_t i = 0; i < wedges.size(); i++)
+    {
+        array[i].x = points[wedges[i].pointIndex].x;
+        array[i].y = points[wedges[i].pointIndex].y;
+        array[i].z = points[wedges[i].pointIndex].z;
+
+        array[i].u = wedges[i].u;
+        array[i].v = wedges[i].v;
+        array[i].materialIndex = wedges[i].materialIndex;
+    }
+    return array;
+}
+
+GLuint *getIndicesArray(std::vector<PSK_Face> &faces)
+{
+    GLuint *array = new GLuint[3 * faces.size()];
+    for (size_t i = 0; i < faces.size(); i++)
+    {
+        array[i * 3] = faces[i].wedge0;
+        array[i * 3 + 1] = faces[i].wedge1;
+        array[i * 3 + 2] = faces[i].wedge2;
+    }
+    return array;
+}
+
+std::map<std::string, std::string> readKeyValueFile(const std::string &filePath)
+{
+    // KeyValue as in key=value\n files
+    // This will be used for .mat and .skmap files
+    std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+
+    size_t filesize = (size_t) file.tellg();
+    file.seekg(0);
+     
+    if (!file.is_open())
+    {
+        std::cout << "Failed to open file: " << filePath << "\n";
+        throw std::runtime_error("failed to open key value file");
+    }
+
+    std::map<std::string, std::string> kvMap;
+
+    char buffer;
+    while (file.tellg() < filesize)
+    {
+        std::string key, value;
+
+        // Read key
+        while (file.tellg() < filesize)
+        {
+            file.read(&buffer, 1);
+            if (buffer == '=') break;
+
+            key += buffer;
+        }
+
+        while (file.tellg() < filesize)
+        {
+            file.read(&buffer, 1);
+            if (buffer == '\n') break;
+
+            value += buffer;
+        }
+
+        // fucking windows line enders
+        rtrim(value);
+
+        kvMap[key] = value;
+    }
+
+    file.close();
+
+    return kvMap;
+}
 
 
 PSK_ChunkHeader readChunkHeader(std::ifstream &file)
@@ -188,6 +338,7 @@ std::vector<PSK_Material> readMaterialsChunk(std::ifstream &pskFile, std::string
     {
         material.name.resize(64);
         pskFile.read(material.name.data(), 64);
+        rtrim(material.name);
 
         pskFile.read(buffer, 4);
         std::memcpy(&material.textureIndex, buffer, 4);
@@ -215,10 +366,9 @@ std::vector<PSK_Material> readMaterialsChunk(std::ifstream &pskFile, std::string
     return materials;
 }
 
-PSK_MeshData* ReadPSKFile(const std::string &pskPath)
+PSK_MeshData* loadPSK(const std::string &pskPath)
 {
     std::ifstream pskFile(pskPath, std::ios::ate | std::ios::binary);
-
     
     if (!pskFile.is_open())
     {
@@ -233,14 +383,6 @@ PSK_MeshData* ReadPSKFile(const std::string &pskPath)
     
     PSK_MeshData *data = new PSK_MeshData;
     
-    // Set directory
-    int lastSlashIndex = 0;
-    for (int i = 0; i < pskPath.size(); i++)
-    {
-        if (pskPath[i] == '/') lastSlashIndex = i;
-    }
-    data->directory = pskPath.substr(0, lastSlashIndex);
-
     // Load data
     while (pskFile.tellg() != filesize)
     {
@@ -278,3 +420,91 @@ PSK_MeshData* ReadPSKFile(const std::string &pskPath)
     return data;
 }
 
+/***************** MESH ASSET FUNCTIONS ******************/
+uam::MeshAsset::MeshAsset(std::string &pskPath)
+{
+    this->pskPath = pskPath;
+}
+
+uam::MeshAsset::~MeshAsset()
+{
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+    glDeleteVertexArrays(1, &VAO);
+
+    for (std::string &texturePath : texturePaths)
+    {
+        UnregisterTexture(texturePath);
+    }
+}
+
+void uam::MeshAsset::LoadData()
+{
+    PSK_MeshData *data = loadPSK(pskPath);
+
+    // Generate buffers
+    glGenVertexArrays(1, &VAO);
+    glBindVertexArray(VAO);
+
+    glGenBuffers(1, &VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+    glGenBuffers(1, &EBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+
+    // Load vertex and face data
+    CompleteVertex *vertices = getVertexArray(data->points, data->wedges);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(CompleteVertex) * data->wedges.size(), vertices, GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, x));
+    glEnableVertexAttribArray(0);
+    
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, u));
+    glEnableVertexAttribArray(1);
+    
+    glVertexAttribPointer(2, 1, GL_INT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, materialIndex));
+    glEnableVertexAttribArray(2);
+    
+    delete[] vertices;
+
+    indicesCount = data->faces.size() * 3;
+    GLuint *indices = getIndicesArray(data->faces);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLuint) * data->faces.size() * 3, indices, GL_STATIC_DRAW);
+    delete[] indices;
+
+    std::filesystem::path directory = std::filesystem::path(pskPath).remove_filename().generic_string();
+    std::string stem = std::filesystem::path(pskPath).stem().generic_string();
+
+    // Load map file
+    std::map<std::string, std::string> keyMap = readKeyValueFile( std::filesystem::path(pskPath).replace_extension(".skmap").generic_string() );
+
+    // Load textures
+    texturePaths.resize(data->materials.size());
+    textureIDs.resize(data->materials.size());
+
+    for (const auto &material : data->materials)
+    {
+        std::filesystem::path materialPath = keyMap[material.name];
+        std::map<std::string, std::string> materialKeyMap = readKeyValueFile(materialPath.generic_string());
+
+        if (materialKeyMap.count("Diffuse") == 0)
+        {
+            std::cout << "No diffuse texture found in file " << materialPath << std::endl;
+            continue;
+        }
+        std::string texturePath = keyMap[materialKeyMap["Diffuse"]];
+        
+        texturePaths[material.textureIndex] = texturePath;
+        std::cout << "Registering texture\n";
+        textureIDs[material.textureIndex] = RegisterTexture(texturePath);
+    }
+
+    // Just to prevent any mistaken additional writes to this VAO
+    glBindVertexArray(0);
+}
+
+void uam::MeshAsset::Draw()
+{
+    glBindVertexArray(VAO);
+    glDrawElements(GL_TRIANGLES, indicesCount, GL_UNSIGNED_INT, (void*)(0));
+}

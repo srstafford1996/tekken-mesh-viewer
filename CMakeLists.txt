@@ -17,27 +17,21 @@ find_package(OpenGL REQUIRED)
 add_subdirectory(extern/glew/build/cmake)
 add_subdirectory(extern/glm/)
 
-set(HEADER_FILES
-    include/pskreader.hpp
-    include/shader.hpp
-    include/model.hpp
-    include/camera.hpp
-)
-
 add_definitions(-D_AMD64_)
 # Manually specify source files
 set(SOURCE_FILES
     src/main.cpp
-    src/model.cpp
-    src/shader.cpp
-    src/pskreader.cpp
-    src/camera.cpp
+
+    src/UAM/textures.cpp
+    src/UAM/uam.cpp
+
+    src/Engine/camera.cpp
+    src/Engine/model.cpp
+    src/Engine/shader.cpp
 )
 
-include_directories(include)
-
 # Create executable
-add_executable(${PROJECT_NAME} ${SOURCE_FILES} ${HEADER_FILES})
+add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
 target_link_libraries(${PROJECT_NAME}
     SDL3::SDL3

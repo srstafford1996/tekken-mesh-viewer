@@ -1,14 +1,16 @@
-#include "camera.hpp"
-
 #include <iostream>
+
 #include <glm.hpp>
+#include <gtc/type_ptr.hpp> // glm::lookAt
+
+#include "camera.hpp"
 
 #define CAMERA_UP glm::vec3(0.0f, 1.0f, 0.0f)
 #define CAMERA_SPEED 200.0f
 
 #define SENSITIVITY 0.1f
 
-SK_Camera::SK_Camera(float initYaw, float initPitch, glm::vec3 initPos)
+Camera::Camera(float initYaw, float initPitch, glm::vec3 initPos)
 {
     yaw = initYaw;
     pitch = initPitch;
@@ -17,7 +19,7 @@ SK_Camera::SK_Camera(float initYaw, float initPitch, glm::vec3 initPos)
     updateDirection();
 }
 
-void SK_Camera::updateDirection()
+void Camera::updateDirection()
 {
     direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
     direction.y = sin(glm::radians(pitch));
@@ -25,12 +27,12 @@ void SK_Camera::updateDirection()
     front = glm::normalize(direction);
 }
 
-glm::mat4 SK_Camera::getView()
+glm::mat4 Camera::getView()
 {
     return glm::lookAt(position, position + front, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
-void SK_Camera::processKeyboardInput(SDL_Scancode scancode, float deltaTime)
+void Camera::processKeyboardInput(SDL_Scancode scancode, float deltaTime)
 {
     if (scancode == SDL_SCANCODE_W) position += (CAMERA_SPEED * deltaTime) * front;
     if (scancode == SDL_SCANCODE_S) position -= (CAMERA_SPEED * deltaTime) * front;
@@ -38,7 +40,7 @@ void SK_Camera::processKeyboardInput(SDL_Scancode scancode, float deltaTime)
     if (scancode == SDL_SCANCODE_D) position += glm::normalize(glm::cross(front, CAMERA_UP)) * (CAMERA_SPEED * deltaTime);
 }
 
-void SK_Camera::processMouseInput()
+void Camera::processMouseInput()
 {
     float deltaX, deltaY;
     SDL_GetRelativeMouseState(&deltaX, &deltaY);
