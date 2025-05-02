@@ -1,10 +1,24 @@
 #pragma once
 
 #include <string>
+#include <map>
 #include <GL/glew.h>
+#include <vector>
 
 namespace uam
 {
-    void UnregisterTexture(const std::string texPath);
-    GLuint RegisterTexture(const std::string texPath);
+
+    class Material
+    {
+    public:
+        GLuint mainTexArray;
+        std::vector<GLuint> otherTextures;
+
+        std::vector<std::string> texPaths;
+
+
+        Material(std::map<std::string, std::string> &materialData, std::map<std::string, std::string> &keyMap);
+        ~Material();
+    };
+
 }

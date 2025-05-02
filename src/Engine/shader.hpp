@@ -14,6 +14,7 @@ public:
     void use();
 
     void setFloat(const std::string &name, float val);
+    void setInt(const std::string &name, int val);
     void setVec3(const std::string &name, const glm::vec3 vec);
     void setMat4(const std::string &name, const glm::mat4 &matrix);
 };

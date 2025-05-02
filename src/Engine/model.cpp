@@ -28,10 +28,9 @@ void Model::Draw(ShaderProgram &shader)
     // and set view and projection matrix
 
     shader.setMat4("modelMatrix", modelMatrix);
-
     for (uam::MeshAsset *mesh : meshes)
     {
-        mesh->Draw();
+        mesh->Draw(shader);
     }
 }
 

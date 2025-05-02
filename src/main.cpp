@@ -41,6 +41,10 @@ int main()
     std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
     std::cout << "OpenGL Vendor: " << glGetString(GL_VENDOR) << std::endl;
 
+    GLint maxTextureUints;
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &maxTextureUints);
+    std::cout << "OpenGL Max Textures: " << maxTextureUints << std::endl;
+
     GLenum glewError = glewInit();
     if (glewError != GLEW_OK)
     {

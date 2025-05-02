@@ -78,6 +78,15 @@ ShaderProgram::ShaderProgram(const std::string &vertPath, const std::string &fra
 
     glDeleteShader(vertShader);
     glDeleteShader(fragShader);
+
+    // Set up texture locations
+    GLint texLocation = glGetUniformLocation(programID, "otherTextures");
+    GLint texIndices[15] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    glUniform1iv(texLocation, 16, texIndices);
+
+    GLint texArrayLocation = glGetUniformLocation(programID, "mainTextureArray");
+    glUniform1i(texArrayLocation, 0);
+
 }
 
 void ShaderProgram::use()
@@ -89,6 +98,12 @@ void ShaderProgram::setFloat(const std::string &name, float val)
 {
     glUniform1f(glGetUniformLocation(programID, name.c_str()), val);
 }
+
+void ShaderProgram::setInt(const std::string &name, int val)
+{
+    glUniform1i(glGetUniformLocation(programID, name.c_str()), val);
+}
+
 
 void ShaderProgram::setVec3(const std::string &name, const glm::vec3 vec3)
 {
