@@ -7,7 +7,6 @@
 
 namespace uam
 {
-
     class Material
     {
     public:

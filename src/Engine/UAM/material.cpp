@@ -5,14 +5,12 @@
 #include <iostream>
 #include <fstream>
 
-#include "../Common/util.hpp"
-#include "textures.hpp"
+#include "../../Common/util.hpp"
+#include "material.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_TGA
-#include "../Common/stb_image.h"
-
-
+#include "../../Common/stb_image.h"
 
 // Texture Registry
 struct _texReg
@@ -25,7 +23,6 @@ std::map<std::string, _texReg*> _texRegistry;
 
 GLuint registerTexture(const std::string texPath);
 void unregisterTexture(const std::string texPath);
-
 GLuint createTextureArray(std::vector<std::string> &texPaths);
 
 uam::Material::Material(std::map<std::string, std::string> &materialData, std::map<std::string, std::string> &keyMap)
@@ -74,6 +71,9 @@ uam::Material::~Material()
 
     glDeleteTextures(1, &mainTexArray);
 }
+
+
+/*************** UTIL FUNCTIONS ***************/
 
 GLuint registerTexture(const std::string texPath)
 {

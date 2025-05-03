@@ -1,4 +1,3 @@
-#include <string>
 #include <cstring> // for memcpy
 
 #include <map>
@@ -6,17 +5,163 @@
 #include <iostream>
 #include <filesystem>
 
-#include <vector>
-#include <stdint.h>
 
-#include <GL/glew.h>
-
-#include "../Common/util.hpp"
-
-#include "uam.hpp"
-#include "textures.hpp"
+#include "../../Common/util.hpp"
+#include "mesh.hpp"
 
 using namespace uam;
+
+struct CompleteVertex
+{
+    float x;
+    float y;
+    float z;
+
+    float u;
+    float v;
+    int32_t materialIndex;
+};
+
+PSK_MeshData* loadPSK(const std::string &pskPath);
+CompleteVertex *getVertexArray(std::vector<PSK_Point> &points, std::vector<PSK_Wedge> &wedges);
+std::map<std::string, std::string> readKeyValueFile(const std::string &filePath);
+
+PSK_ChunkHeader readChunkHeader(std::ifstream &file);
+std::vector<PSK_Point> readPointsChunk(std::ifstream &pskFile, int32_t dataSize, int32_t dataCount);
+std::vector<PSK_Wedge> readWedgesChunk(std::ifstream &pskFile, int32_t dataSize, int32_t dataCount);
+std::vector<PSK_Face> readFacesChunk(std::ifstream &pskFile, std::string headerId, int32_t dataSize, int32_t dataCount);
+std::vector<PSK_Material> readMaterialsChunk(std::ifstream &pskFile, std::string headerId, int32_t dataSize, int32_t dataCount);
+
+/***************** MESH ASSET IMPLEMENTATION ******************/
+MeshAsset::MeshAsset(std::string &pskPath)
+{
+    this->pskPath = pskPath;
+}
+
+MeshAsset::~MeshAsset()
+{
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+    glDeleteVertexArrays(1, &VAO);
+
+    for (Material* material : materials)
+    {
+        delete material;
+    }
+}
+
+void MeshAsset::LoadData()
+{
+    PSK_MeshData *data = loadPSK(pskPath);
+
+    // Generate buffers
+    glGenVertexArrays(1, &VAO);
+    glBindVertexArray(VAO);
+
+    glGenBuffers(1, &VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+    glGenBuffers(1, &EBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+
+    // Load vertex and face data
+    CompleteVertex *vertices = getVertexArray(data->points, data->wedges);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(CompleteVertex) * data->wedges.size(), vertices, GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, x));
+    glEnableVertexAttribArray(0);
+    
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, u));
+    glEnableVertexAttribArray(1);
+    
+    glVertexAttribPointer(2, 1, GL_INT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, materialIndex));
+    glEnableVertexAttribArray(2);
+    
+    delete[] vertices;
+
+    GLuint *indices = buildIndicesArray(data->faces);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLuint) * data->faces.size() * 3, indices, GL_STATIC_DRAW);
+    delete[] indices;
+
+    std::filesystem::path directory = std::filesystem::path(pskPath).remove_filename().generic_string();
+    std::string stem = std::filesystem::path(pskPath).stem().generic_string();
+
+    // Load map file
+    std::map<std::string, std::string> keyMap = readKeyValueFile( std::filesystem::path(pskPath).replace_extension(".skmap").generic_string() );
+
+    // Load materials
+    for (const auto &materialData : data->materials)
+    {
+        std::filesystem::path materialPath = keyMap[materialData.name];
+        std::map<std::string, std::string> materialKeyMap = readKeyValueFile(materialPath.generic_string());
+
+        Material *material = new Material(materialKeyMap, keyMap);
+        materials.push_back(material);
+    }
+
+    // Just to prevent any mistaken additional writes to this VAO
+    glBindVertexArray(0);
+}
+
+void MeshAsset::Draw(ShaderProgram &shader)
+{
+    glBindVertexArray(VAO);
+
+    // For each material batch
+    // bind the appropriate material
+    // and render
+
+    uint64_t countOffset = 0;
+    for (size_t i = 0; i < materialBatchSizes.size(); i++)
+    {
+        // Bind the main texture array (diffuse, normal, spec)
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materials[i]->mainTexArray);
+
+        // And any extras
+        for (size_t k = 0; k < materials[i]->otherTextures.size(); k++)
+        {
+            glActiveTexture(GL_TEXTURE1 + k);
+            glBindTexture(GL_TEXTURE_2D, materials[i]->otherTextures[k]);
+        }
+
+        shader.setInt("otherTexturesSize", materials[i]->otherTextures.size());
+        glDrawElements(GL_TRIANGLES, materialBatchSizes[i], GL_UNSIGNED_INT, (void*)(countOffset * sizeof(GLuint)));
+        countOffset += materialBatchSizes[i];
+    }
+}
+
+GLuint* MeshAsset::buildIndicesArray(std::vector<PSK_Face> &faces)
+{
+
+    GLuint *array = new GLuint[3 * faces.size()];
+
+    // For batch rendering
+    // assuming all faces are sorted by material indices
+    materialBatchSizes.push_back(0);
+    
+    int8_t currMatIndex = faces[0].materialIndex;
+    for (size_t i = 0; i < faces.size(); i++)
+    {
+        array[i * 3] = faces[i].wedge0;
+        array[i * 3 + 1] = faces[i].wedge1;
+        array[i * 3 + 2] = faces[i].wedge2;
+
+        // Increment count of materal batch
+        // or move to the next one
+        if (currMatIndex == faces[i].materialIndex)
+        {
+            materialBatchSizes[faces[i].materialIndex] += 3;
+            continue;
+        }
+
+        currMatIndex = faces[i].materialIndex;
+        materialBatchSizes.push_back(3);
+    }
+    return array;
+}
+
+/*************************** UTIL FUNCTIONS ***************************/
 
 CompleteVertex *getVertexArray(std::vector<PSK_Point> &points, std::vector<PSK_Wedge> &wedges)
 {
@@ -348,134 +493,4 @@ PSK_MeshData* loadPSK(const std::string &pskPath)
     pskFile.close();
 
     return data;
-}
-
-/***************** MESH ASSET FUNCTIONS ******************/
-MeshAsset::MeshAsset(std::string &pskPath)
-{
-    this->pskPath = pskPath;
-}
-
-MeshAsset::~MeshAsset()
-{
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteVertexArrays(1, &VAO);
-
-    for (Material* material : materials)
-    {
-        delete material;
-    }
-}
-
-void MeshAsset::LoadData()
-{
-    PSK_MeshData *data = loadPSK(pskPath);
-
-    // Generate buffers
-    glGenVertexArrays(1, &VAO);
-    glBindVertexArray(VAO);
-
-    glGenBuffers(1, &VBO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-
-    glGenBuffers(1, &EBO);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-
-    // Load vertex and face data
-    CompleteVertex *vertices = getVertexArray(data->points, data->wedges);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(CompleteVertex) * data->wedges.size(), vertices, GL_STATIC_DRAW);
-    
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, x));
-    glEnableVertexAttribArray(0);
-    
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, u));
-    glEnableVertexAttribArray(1);
-    
-    glVertexAttribPointer(2, 1, GL_INT, GL_FALSE, sizeof(CompleteVertex), (void*)offsetof(CompleteVertex, materialIndex));
-    glEnableVertexAttribArray(2);
-    
-    delete[] vertices;
-
-    indicesCount = data->faces.size() * 3;
-    GLuint *indices = buildIndicesArray(data->faces);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(GLuint) * data->faces.size() * 3, indices, GL_STATIC_DRAW);
-    delete[] indices;
-
-    std::filesystem::path directory = std::filesystem::path(pskPath).remove_filename().generic_string();
-    std::string stem = std::filesystem::path(pskPath).stem().generic_string();
-
-    // Load map file
-    std::map<std::string, std::string> keyMap = readKeyValueFile( std::filesystem::path(pskPath).replace_extension(".skmap").generic_string() );
-
-    // Load materials
-    for (const auto &materialData : data->materials)
-    {
-        std::filesystem::path materialPath = keyMap[materialData.name];
-        std::map<std::string, std::string> materialKeyMap = readKeyValueFile(materialPath.generic_string());
-
-        Material *material = new Material(materialKeyMap, keyMap);
-        materials.push_back(material);
-    }
-
-    // Just to prevent any mistaken additional writes to this VAO
-    glBindVertexArray(0);
-}
-
-void MeshAsset::Draw(ShaderProgram &shader)
-{
-    glBindVertexArray(VAO);
-
-    // For each material batch
-    // bind the appropriate material
-    // and render
-
-    uint64_t countOffset = 0;
-    for (size_t i = 0; i < materialBatchSizes.size(); i++)
-    {
-        // Bind the main texture array (diffuse, normal, spec)
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, materials[i]->mainTexArray);
-
-        // And any extras
-        for (size_t k = 0; k < materials[i]->otherTextures.size(); k++)
-        {
-            glActiveTexture(GL_TEXTURE1 + k);
-            glBindTexture(GL_TEXTURE_2D, materials[i]->otherTextures[k]);
-        }
-
-        shader.setInt("otherTexturesSize", materials[i]->otherTextures.size());
-        glDrawElements(GL_TRIANGLES, materialBatchSizes[i], GL_UNSIGNED_INT, (void*)(countOffset * sizeof(GLuint)));
-        countOffset += materialBatchSizes[i];
-    }
-}
-
-GLuint *MeshAsset::buildIndicesArray(std::vector<PSK_Face> &faces)
-{
-
-    GLuint *array = new GLuint[3 * faces.size()];
-
-    // For batch rendering
-    // assuming all faces are sorted by material indices
-    materialBatchSizes.push_back(0);
-    
-    int8_t currMatIndex = faces[0].materialIndex;
-    for (size_t i = 0; i < faces.size(); i++)
-    {
-        array[i * 3] = faces[i].wedge0;
-        array[i * 3 + 1] = faces[i].wedge1;
-        array[i * 3 + 2] = faces[i].wedge2;
-
-        // Increment count of materal batch
-        // or move to the next one
-        if (currMatIndex == faces[i].materialIndex)
-        {
-            materialBatchSizes[faces[i].materialIndex] += 3;
-            continue;
-        }
-
-        currMatIndex = faces[i].materialIndex;
-        materialBatchSizes.push_back(3);
-    }
-    return array;
 }

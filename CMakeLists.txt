@@ -22,12 +22,12 @@ add_definitions(-D_AMD64_)
 set(SOURCE_FILES
     src/main.cpp
 
-    src/UAM/textures.cpp
-    src/UAM/uam.cpp
-
     src/Engine/camera.cpp
     src/Engine/model.cpp
     src/Engine/shader.cpp
+
+    src/Engine/UAM/mesh.cpp
+    src/Engine/UAM/material.cpp
 )
 
 # Create executable

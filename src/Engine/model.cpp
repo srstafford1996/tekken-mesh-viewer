@@ -3,7 +3,7 @@
 #include <iostream>
 
 #include "shader.hpp"
-#include "../UAM/uam.hpp"
+#include "UAM/mesh.hpp"
 
 #include "model.hpp"
 
